@@ -1,0 +1,15 @@
+Phase 5 — Route Organization
+
+Dashboard /api/dashboard
+Monitoring /api/stations
+Predictions /api/predictions
+Source Attribution /api/sources
+Hotspots /api/hotspots
+Alerts /api/alert
+Officers /api/officers
+Assignment /api/assignments
+Reports /api/reports
+
+bcrypt password hashing
+
+Phase 6 — AI Integration Layer
