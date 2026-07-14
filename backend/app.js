@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express")
 const {loginCheck,viewOnlyBy} = require("../middleware/auth")
+const logReqRes = require("./middleware/logger")
 
 const apiAuthRouter = require("./routes/apiAuth")
 const apiAlertRouter = require("./routes/apiAlert")
@@ -15,6 +16,9 @@ const apiSourcesRouter = require("./routes/apiSources")
 const apiStationsRouter = require("./routes/apiStations")
 
 const app = express()
+
+app.use(express.urlencoded())
+app.use(logReqRes("log.txt"));
 
 app.get("/",(req,res)=>{
     return res.end("Hello from Server")
