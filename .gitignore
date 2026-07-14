@@ -38,3 +38,7 @@ Thumbs.db
 *.h5
 *.pt
 *.pth
+
+*.log
+log.txt
+database_folder/
