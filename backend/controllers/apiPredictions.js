@@ -13,7 +13,7 @@ async function getPredictions(req, res) {
             const avgAQI = Math.round(stations.reduce((sum, s) => sum + s.AQI, 0) / stations.length);
             const avgPM25 = Math.round(stations.reduce((sum, s) => sum + s.PM25, 0) / stations.length);
 
-            const prediction = predictAQI(city, avgAQI, avgPM25);
+            const prediction = await predictAQI(city, avgAQI, avgPM25);
             predictions.push({
                 city,
                 currentAQI: avgAQI,
@@ -54,7 +54,7 @@ async function getPrediction(req, res) {
         const avgAQI = Math.round(stations.reduce((sum, s) => sum + s.AQI, 0) / stations.length);
         const avgPM25 = Math.round(stations.reduce((sum, s) => sum + s.PM25, 0) / stations.length);
 
-        const prediction = predictAQI(cityName, avgAQI, avgPM25);
+        const prediction = await predictAQI(cityName, avgAQI, avgPM25);
 
         return res.status(200).json({
             success: true,
@@ -93,7 +93,7 @@ async function createPrediction(req, res) {
         const avgAQI = Math.round(stations.reduce((sum, s) => sum + s.AQI, 0) / stations.length);
         const avgPM25 = Math.round(stations.reduce((sum, s) => sum + s.PM25, 0) / stations.length);
 
-        const prediction = predictAQI(city, avgAQI, avgPM25);
+        const prediction = await predictAQI(city, avgAQI, avgPM25);
 
         return res.status(201).json({
             success: true,

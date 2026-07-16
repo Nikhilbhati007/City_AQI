@@ -12,7 +12,7 @@ INPUT_FILE = PROJECT_ROOT / "real_aqi_dataset.csv"
 OUTPUT_FILE = PROJECT_ROOT / "clean_aqi_dataset.csv"
 
 DATE_FROM = "2025-01-01"
-DATE_TO = "2025-12-31"
+DATE_TO = "2026-12-31"
 
 NON_NEGATIVE_PARAMS = ["pm25", "pm10", "no2", "no", "nox", "o3", "co", "so2"]
 

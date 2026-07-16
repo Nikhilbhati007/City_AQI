@@ -78,8 +78,8 @@ router.get("/cities/:city", async (req, res) => {
         const avgCO = Math.round(stations.reduce((sum, s) => sum + s.CO, 0) / stations.length);
         const avgO3 = Math.round(stations.reduce((sum, s) => sum + s.O3, 0) / stations.length);
 
-        const prediction = predictAQI(cityName, avgAQI, avgPM25);
-        const attribution = sourceAttribution(cityName, avgAQI, avgNO2, avgPM25, avgPM10);
+        const prediction = await predictAQI(cityName, avgAQI, avgPM25);
+        const attribution = await sourceAttribution(cityName, avgAQI, avgNO2, avgPM25, avgPM10);
         const health = healthRisk(avgAQI);
 
         const hotspots = await Hotspot.find({
@@ -247,7 +247,7 @@ router.get("/predictions/:city", async (req, res) => {
 
         const avgAQI = Math.round(stations.reduce((sum, s) => sum + s.AQI, 0) / stations.length);
         const avgPM25 = Math.round(stations.reduce((sum, s) => sum + s.PM25, 0) / stations.length);
-        const prediction = predictAQI(cityName, avgAQI, avgPM25);
+        const prediction = await predictAQI(cityName, avgAQI, avgPM25);
 
         return res.status(200).json({
             success: true,
@@ -291,7 +291,7 @@ router.get("/compare", async (req, res) => {
             const avgCO = Math.round(stations.reduce((sum, s) => sum + s.CO, 0) / stations.length);
             const avgO3 = Math.round(stations.reduce((sum, s) => sum + s.O3, 0) / stations.length);
 
-            const prediction = predictAQI(cityName, avgAQI, avgPM25);
+            const prediction = await predictAQI(cityName, avgAQI, avgPM25);
             const health = healthRisk(avgAQI);
 
             return {

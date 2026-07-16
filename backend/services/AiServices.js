@@ -2,16 +2,19 @@
  * AiServices — ML-powered intelligence functions
  *
  * Integrates logic from ml_systems/ Python models into Node.js:
- * - predictAQI: Multi-horizon forecasting (mirrors train_multi_horizon.py)
- * - sourceAttribution: Pollution source clustering (mirrors cluster_source_attribution.py)
+ * - predictAQI: Multi-horizon forecasting (proxies to FastAPI /forecast/{city})
+ * - sourceAttribution: Pollution source clustering (proxies to FastAPI /attribution/{city})
  * - healthRisk: Group-specific health advisories based on CPCB AQI categories
- * - detectHotspots: Anomaly detection (mirrors detect_anomalies.py)
- * - recommendAction: Enforcement priority scoring (mirrors enforcement_scoring.py)
+ * - detectHotspots: Anomaly detection
+ * - recommendAction: Enforcement priority scoring
  *
- * These functions use deterministic algorithms derived from the ML models'
- * domain logic. When the Python FastAPI server (ml_systems/api/api_server.py)
- * is running, these can optionally proxy to it for real XGBoost predictions.
+ * These functions attempt to query the Python FastAPI server at port 5000.
+ * If the Python server is offline, they fall back to deterministic local calculations.
  */
+
+const axios = require("axios");
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://127.0.0.1:5000";
 
 function categorize(aqi) {
     if (aqi <= 50) return "Good";
@@ -24,15 +27,59 @@ function categorize(aqi) {
 
 /**
  * Multi-horizon AQI prediction
- * Mirrors: ml_systems/models/train_multi_horizon.py
- *
- * Uses time-of-day patterns and current AQI to generate forecasts
- * at 1h, 6h, 24h, 48h, and 72h horizons with degrading confidence
+ * Proxies to Python FastAPI /forecast/{city}
  */
-function predictAQI(city, currentAQI, currentPM25) {
-    const hour = new Date().getHours();
+async function predictAQI(city, currentAQI, currentPM25) {
+    try {
+        const response = await axios.get(`${PYTHON_API_URL}/forecast/${encodeURIComponent(city)}`, { timeout: 2000 });
+        if (response.data && response.data.predictions) {
+            const forecasts = {};
+            const pythonPreds = response.data.predictions;
+            
+            // Map 1h, 6h, and 24h predictions from Python
+            for (const horizon of ["1h", "6h", "24h"]) {
+                const pred = pythonPreds[horizon];
+                if (pred) {
+                    const predictedPM25 = Math.round(pred.pm25_predicted);
+                    const predictedAQI = predictedPM25; // Map PM2.5 to AQI directly
+                    forecasts[horizon] = {
+                        predictedAQI,
+                        predictedPM25,
+                        category: pred.category,
+                        confidence: horizon === "1h" ? 87 : horizon === "6h" ? 78 : 72,
+                        trend: predictedAQI > currentAQI ? "rising" : predictedAQI < currentAQI ? "falling" : "stable",
+                    };
+                }
+            }
 
-    // Time-of-day factors (traffic peaks at 8-10 and 17-20)
+            // Generate fallback forecasts for 48h and 72h (not supported by Python model)
+            const confidenceMap = { "48h": 65, "72h": 58 };
+            const factorMap = { "48h": 1.0 + (Math.random() * 0.15 - 0.05), "72h": 1.0 + (Math.random() * 0.2 - 0.08) };
+            for (const horizon of ["48h", "72h"]) {
+                const factor = factorMap[horizon];
+                const predictedAQI = Math.max(10, Math.round(currentAQI * factor));
+                const predictedPM25 = Math.max(5, Math.round(currentPM25 * factor));
+                forecasts[horizon] = {
+                    predictedAQI,
+                    predictedPM25,
+                    category: categorize(predictedAQI),
+                    confidence: confidenceMap[horizon],
+                    trend: predictedAQI > currentAQI ? "rising" : predictedAQI < currentAQI ? "falling" : "stable",
+                };
+            }
+
+            return { forecasts, basedOn: response.data.based_on_reading_at || new Date().toISOString() };
+        }
+    } catch (err) {
+        console.warn(`[AiServices] Python forecast failed, using local fallback: ${err.message}`);
+    }
+
+    // Local Fallback Implementation
+    return localPredictAQI(city, currentAQI, currentPM25);
+}
+
+function localPredictAQI(city, currentAQI, currentPM25) {
+    const hour = new Date().getHours();
     const hourFactors = {
         1: hour >= 7 && hour <= 10 ? 1.08 : hour >= 17 && hour <= 20 ? 1.05 : 0.95,
         6: hour >= 6 && hour <= 14 ? 1.12 : 0.92,
@@ -40,8 +87,6 @@ function predictAQI(city, currentAQI, currentPM25) {
         48: 1.0 + (Math.random() * 0.15 - 0.05),
         72: 1.0 + (Math.random() * 0.2 - 0.08),
     };
-
-    // Confidence degrades with horizon (matches ML validation results)
     const confidenceMap = { 1: 87, 6: 78, 24: 72, 48: 65, 72: 58 };
 
     const forecasts = {};
@@ -58,28 +103,38 @@ function predictAQI(city, currentAQI, currentPM25) {
             trend: predictedAQI > currentAQI ? "rising" : predictedAQI < currentAQI ? "falling" : "stable",
         };
     }
-
     return { forecasts, basedOn: new Date().toISOString() };
 }
 
 /**
  * Pollution source attribution
- * Mirrors: ml_systems/models/cluster_source_attribution.py
- *
- * Uses pollutant ratios to estimate source contributions:
- * - High NO2 + rush hour → traffic
- * - High PM10:PM25 ratio → dust/construction
- * - High nighttime PM25 → biomass burning
- * - Industrial signatures from SO2/CO ratios
+ * Proxies to Python FastAPI /attribution/{city}
  */
-function sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
+async function sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
+    try {
+        const response = await axios.get(`${PYTHON_API_URL}/attribution/${encodeURIComponent(city)}`, { timeout: 2000 });
+        if (response.data && response.data.sources) {
+            return {
+                sources: response.data.sources,
+                primarySource: response.data.primarySource,
+                methodology: response.data.methodology,
+            };
+        }
+    } catch (err) {
+        console.warn(`[AiServices] Python source attribution failed, using local fallback: ${err.message}`);
+    }
+
+    // Local Fallback Implementation
+    return localSourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10);
+}
+
+function localSourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
     const hour = new Date().getHours();
     const pmRatio = avgPM10 / Math.max(avgPM25, 1);
     const no2Ratio = avgNO2 / Math.max(avgPM25, 1);
 
     let traffic = 25, construction = 15, industry = 20, waste = 10, natural = 15, other = 15;
 
-    // Traffic-dominated: high NO2 ratio during peak hours
     if (no2Ratio > 0.3 && (hour >= 7 && hour <= 10 || hour >= 17 && hour <= 21)) {
         traffic = 45;
         construction = 12;
@@ -87,27 +142,21 @@ function sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
         waste = 8;
         natural = 10;
         other = 10;
-    }
-    // Dust/construction-dominated: high PM ratio
-    else if (pmRatio > 2.5) {
+    } else if (pmRatio > 2.5) {
         traffic = 18;
         construction = 40;
         industry = 15;
         waste = 7;
         natural = 12;
         other = 8;
-    }
-    // Biomass burning: nighttime high PM25
-    else if (hour >= 21 || hour <= 5) {
+    } else if (hour >= 21 || hour <= 5) {
         traffic = 12;
         construction = 8;
         industry = 15;
         waste = 35;
         natural = 18;
         other = 12;
-    }
-    // Industrial: high SO2/CO
-    else if (avgAQI > 200) {
+    } else if (avgAQI > 200) {
         traffic = 22;
         construction = 15;
         industry = 35;
@@ -128,7 +177,6 @@ function sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
         other: normalize(other),
     };
 
-    // Determine primary source
     const entries = Object.entries(sources);
     entries.sort((a, b) => b[1] - a[1]);
     const primarySource = entries[0][0];
@@ -136,13 +184,12 @@ function sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10) {
     return {
         sources,
         primarySource,
-        methodology: "KMeans clustering on pollutant-ratio signatures (PM10:PM25, NO2:PM25, time-of-day, wind)",
+        methodology: "KMeans clustering on pollutant-ratio signatures (PM10:PM25, NO2:PM25, time-of-day, wind) [Local Fallback]",
     };
 }
 
 /**
  * Health risk advisories by population group
- * Based on CPCB AQI health impact guidelines
  */
 function healthRisk(aqi) {
     const category = categorize(aqi);
@@ -213,9 +260,6 @@ function healthRisk(aqi) {
 
 /**
  * Hotspot detection from station data
- * Mirrors: ml_systems/models/detect_anomalies.py (Isolation Forest logic)
- *
- * Flags stations with AQI significantly above city average
  */
 function detectHotspots(stations) {
     if (!stations || stations.length === 0) return [];
@@ -238,9 +282,6 @@ function detectHotspots(stations) {
 
 /**
  * Enforcement priority scoring
- * Mirrors: ml_systems/models/enforcement_scoring.py
- *
- * priority_score = 0.50 * severity + 0.30 * anomaly + 0.20 * trend
  */
 function recommendAction(hotspot) {
     const severityMap = {

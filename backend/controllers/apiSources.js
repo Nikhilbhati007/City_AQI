@@ -16,7 +16,7 @@ async function getSources(req, res) {
             const avgPM25 = Math.round(stations.reduce((sum, s) => sum + s.PM25, 0) / stations.length);
             const avgPM10 = Math.round(stations.reduce((sum, s) => sum + s.PM10, 0) / stations.length);
 
-            const attribution = sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10);
+            const attribution = await sourceAttribution(city, avgAQI, avgNO2, avgPM25, avgPM10);
             sourcesData.push({
                 city,
                 avgAQI,
@@ -62,7 +62,7 @@ async function getSource(req, res) {
             status: { $ne: "RESOLVED" },
         });
 
-        const attribution = sourceAttribution(cityName, avgAQI, avgNO2, avgPM25, avgPM10);
+        const attribution = await sourceAttribution(cityName, avgAQI, avgNO2, avgPM25, avgPM10);
 
         return res.status(200).json({
             success: true,

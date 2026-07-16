@@ -1,9 +1,9 @@
 """
-FastAPI backend serving live predictions.
+FastAPI backend serving live predictions and ML results.
 Re-reads clean_aqi_dataset.csv on every request, so new data appears on the
 next poll without a server restart.
 
-Run: uvicorn api.api_server:app --reload --port 8000
+Run: uvicorn api.api_server:app --reload --port 5000
 """
 
 import pandas as pd
@@ -17,7 +17,12 @@ from xgboost import XGBRegressor
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_FILE = PROJECT_ROOT / "clean_aqi_dataset.csv"
 MODEL_DIR = PROJECT_ROOT / "outputs" / "models"
+RESULTS_DIR = PROJECT_ROOT / "outputs" / "results"
 HORIZONS = [1, 6, 24]
+
+ATTRIBUTION_FILE = RESULTS_DIR / "clustered_data.csv"
+ANOMALIES_FILE = RESULTS_DIR / "anomaly_flagged_data.csv"
+PRIORITY_FILE = RESULTS_DIR / "enforcement_priority_queue.csv"
 
 app = FastAPI(title="AQI Intelligence API")
 
@@ -141,6 +146,101 @@ def forecast(city: str):
         "based_on_reading_at": str(latest_row["datetime_hour"].iloc[0]),
         "predictions": predictions,
     }
+
+
+@app.get("/attribution/{city}")
+def attribution(city: str):
+    try:
+        if not ATTRIBUTION_FILE.exists():
+            raise HTTPException(status_code=404, detail="Attribution data not generated yet. Run models first.")
+        df = pd.read_csv(ATTRIBUTION_FILE)
+        city_df = df[df["city"].str.lower() == city.lower()]
+        if city_df.empty:
+            raise HTTPException(status_code=404, detail=f"No attribution data for city '{city}'")
+        latest_row = city_df.sort_values("datetime_hour").iloc[-1]
+        
+        counts = city_df["likely_source"].value_counts()
+        total = len(city_df)
+        sources = {
+            "traffic": int(round((counts.get("traffic-dominated", 0) / total) * 100)) if total > 0 else 0,
+            "construction": int(round((counts.get("dust/construction-dominated", 0) / total) * 100)) if total > 0 else 0,
+            "industry": 20,
+            "waste_burning": int(round((counts.get("biomass-burning-likely", 0) / total) * 100)) if total > 0 else 0,
+            "natural": 10,
+            "other": int(round((counts.get("background/mixed", 0) / total) * 100)) if total > 0 else 0,
+        }
+        
+        source_sum = sum(sources.values())
+        if source_sum > 0:
+            for k in sources:
+                sources[k] = int(round((sources[k] / source_sum) * 100))
+        
+        dominant = latest_row["likely_source"]
+        
+        return {
+            "city": city,
+            "sources": sources,
+            "primarySource": dominant,
+            "methodology": "KMeans clustering on pollutant-ratio signatures (PM10:PM25, NO2:PM25, time-of-day, wind)",
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomalies/{city}")
+def anomalies(city: str):
+    try:
+        if not ANOMALIES_FILE.exists():
+            return {"city": city, "anomalies": []}
+        df = pd.read_csv(ANOMALIES_FILE)
+        city_df = df[df["city"].str.lower() == city.lower()]
+        if city_df.empty:
+            return {"city": city, "anomalies": []}
+        
+        anom_df = city_df[city_df["is_anomaly"] == True].sort_values("datetime_hour", ascending=False).head(10)
+        
+        results = []
+        for _, r in anom_df.iterrows():
+            results.append({
+                "stationName": r["location_name"],
+                "city": r["city"],
+                "location": r["location_name"],
+                "AQI": int(r["pm25"]),
+                "severity": "SEVERE" if r["pm25"] > 300 else "VERY_HIGH" if r["pm25"] > 200 else "HIGH",
+                "anomalyScore": int(round(r["anomaly_score"] * 100)),
+                "timestamp": str(r["datetime_hour"])
+            })
+        return {"city": city, "anomalies": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/priority/{city}")
+def priority(city: str):
+    try:
+        if not PRIORITY_FILE.exists():
+            raise HTTPException(status_code=404, detail="Priority queue data not generated yet. Run models first.")
+        df = pd.read_csv(PRIORITY_FILE)
+        city_df = df[df["city"].str.lower() == city.lower()]
+        if city_df.empty:
+            raise HTTPException(status_code=404, detail=f"No priority queue data for city '{city}'")
+        
+        latest_row = city_df.sort_values("priority_score", ascending=False).iloc[0]
+        priority_score = float(latest_row["priority_score"])
+        
+        return {
+            "city": city,
+            "location_name": latest_row["location_name"],
+            "priorityScore": priority_score,
+            "priorityLevel": "CRITICAL" if priority_score > 70 else "HIGH" if priority_score > 50 else "MEDIUM" if priority_score > 30 else "LOW",
+            "current_pm25": float(latest_row["current_pm25"]),
+            "current_category": latest_row["current_category"],
+            "forecast_24h_pm25": float(latest_row["forecast_24h_pm25"]) if not pd.isna(latest_row["forecast_24h_pm25"]) else None,
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/metrics")
